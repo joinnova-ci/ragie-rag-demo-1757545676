@@ -4,13 +4,15 @@ import json
 
 def cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
     """Compute cosine similarity between two vectors."""
-    a = np.asarray(a)
-    b = np.asarray(b)
-    a_norm_val = np.linalg.norm(a)
-    b_norm_val = np.linalg.norm(b)
-    if a_norm_val == 0.0 or b_norm_val == 0.0:
+    a = np.asarray(a, dtype=np.float64).ravel()
+    b = np.asarray(b, dtype=np.float64).ravel()
+    if a.size == 0 or b.size == 0:
         return 0.0
-    return float(np.dot(a, b) / (a_norm_val * b_norm_val))
+    a_norm = np.linalg.norm(a)
+    b_norm = np.linalg.norm(b)
+    if a_norm == 0.0 or b_norm == 0.0:
+        return 0.0
+    return float(np.dot(a, b) / (a_norm * b_norm))
 
 def rank(documents: List[str], query_emb: np.ndarray, doc_embeddings: List[np.ndarray], top_k: int = 5) -> List[int]:
     """Rank documents by similarity to query."""
@@ -18,38 +20,47 @@ def rank(documents: List[str], query_emb: np.ndarray, doc_embeddings: List[np.nd
     ranked_indices = sorted(range(len(similarities)), key=lambda i: similarities[i], reverse=True)
     if top_k is None:
         return ranked_indices
-    k = max(0, min(top_k, len(ranked_indices)))
+    # Ensure we return exactly top_k (bounded by number of documents)
+    k = max(0, min(int(top_k), len(ranked_indices)))
     return ranked_indices[:k]
 
 def chunk_document(text: str, chunk_size: int = 100, overlap: int = 20) -> List[str]:
     """Split document into overlapping chunks."""
     chunks = []
+    # Normalize overlap to ensure positive progress and intended overlap behavior
     if chunk_size <= 0:
-        return [text] if text else []
+        raise ValueError("chunk_size must be > 0")
+    if overlap < 0:
+        overlap = 0
+    if overlap >= chunk_size:
+        overlap = chunk_size - 1
+    step = chunk_size - overlap
+
     start = 0
-    step = max(1, chunk_size - overlap)
-    while start < len(text):
+    n = len(text)
+    while start < n:
         end = start + chunk_size
         chunks.append(text[start:end])
-        if end >= len(text):
+        if end >= n:
             break
         start += step
     return chunks
 
 def compute_embedding_quality(embeddings: List[np.ndarray]) -> Dict[str, float]:
     """Compute quality metrics for embeddings."""
-    if not embeddings:
-        return {
-            "mean_norm": 0.0,
-            "variance": 0.0
-        }
-    norms = [np.linalg.norm(emb) for emb in embeddings]
-    # Variance over all embedding values to reflect dispersion across embeddings
-    flat_values = np.concatenate([np.asarray(emb).ravel() for emb in embeddings]) if embeddings else np.array([])
-    variance = float(np.var(flat_values)) if flat_values.size > 0 else 0.0
+    norms = [np.linalg.norm(np.asarray(emb, dtype=np.float64).ravel()) for emb in embeddings]
+
+    # Compute variance across all embedding values (flattened)
+    flat_list = [np.asarray(emb, dtype=np.float64).ravel() for emb in embeddings if np.asarray(emb).size > 0]
+    if flat_list:
+        flat = np.concatenate(flat_list)
+        variance = float(np.var(flat))
+    else:
+        variance = 0.0
+
     return {
-        "mean_norm": float(np.mean(norms)),
-        "variance": variance
+        "mean_norm": float(np.mean(norms)) if norms else 0.0,
+        "variance": variance  # This will be broken in tests
     }
 
 def optimize_retrieval_threshold(similarities: List[float], relevance: List[int]) -> float:
@@ -67,6 +78,7 @@ def optimize_retrieval_threshold(similarities: List[float], relevance: List[int]
         precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
         recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
 
+        # Correct F1 score formula
         f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
 
         if f1 > best_f1:
