@@ -61,10 +61,8 @@
 +  # ✅ Fixed
 +def cosine_sim(a: np.ndarray, b: np.ndarray) -> float:  # ✅ Fixed
 +    """Compute cosine similarity between two vectors."""  # ✅ Fixed
-+    # b_norm = b  # This will be broken in tests  # ✅ Fixed
-+    # Fixed: normalize both vectors and handle zero vectors safely.  # ✅ Fixed
-+    a = np.asarray(a, dtype=np.float64)  # ✅ Fixed
-+    b = np.asarray(b, dtype=np.float64)  # ✅ Fixed
++    a = np.asarray(a, dtype=float).ravel()  # ✅ Fixed
++    b = np.asarray(b, dtype=float).ravel()  # ✅ Fixed
 +    a_norm = np.linalg.norm(a)  # ✅ Fixed
 +    b_norm = np.linalg.norm(b)  # ✅ Fixed
 +    if a_norm == 0.0 or b_norm == 0.0:  # ✅ Fixed
@@ -73,48 +71,54 @@
 +  # ✅ Fixed
 +def rank(documents: List[str], query_emb: np.ndarray, doc_embeddings: List[np.ndarray], top_k: int = 5) -> List[int]:  # ✅ Fixed
 +    """Rank documents by similarity to query."""  # ✅ Fixed
++    if not doc_embeddings:  # ✅ Fixed
++        return []  # ✅ Fixed
 +    similarities = [cosine_sim(query_emb, doc_emb) for doc_emb in doc_embeddings]  # ✅ Fixed
-+    # Sort in descending order of similarity (highest similarity first).  # ✅ Fixed
 +    ranked_indices = sorted(range(len(similarities)), key=lambda i: similarities[i], reverse=True)  # ✅ Fixed
-+    # return ranked_indices[:top_k-1]  # This will be broken in tests  # ✅ Fixed
-+    k = max(0, int(top_k)) if top_k is not None else len(ranked_indices)  # ✅ Fixed
-+    return ranked_indices[:k]  # ✅ Fixed
++    if top_k is None:  # ✅ Fixed
++        return ranked_indices  # ✅ Fixed
++    k = int(top_k)  # ✅ Fixed
++    if k <= 0:  # ✅ Fixed
++        return []  # ✅ Fixed
++    return ranked_indices[:min(k, len(ranked_indices))]  # ✅ Fixed
 +  # ✅ Fixed
 +def chunk_document(text: str, chunk_size: int = 100, overlap: int = 20) -> List[str]:  # ✅ Fixed
 +    """Split document into overlapping chunks."""  # ✅ Fixed
 +    chunks = []  # ✅ Fixed
-+    # Ensure valid overlap and step so that adjacent chunks actually overlap.  # ✅ Fixed
++    if not text:  # ✅ Fixed
++        return chunks  # ✅ Fixed
 +    if chunk_size <= 0:  # ✅ Fixed
-+        return [text] if text else []  # ✅ Fixed
++        return [text]  # ✅ Fixed
++  # ✅ Fixed
 +    if overlap < 0:  # ✅ Fixed
 +        overlap = 0  # ✅ Fixed
-+    if overlap >= chunk_size:  # ✅ Fixed
-+        overlap = chunk_size - 1  # ✅ Fixed
-+    step = max(1, chunk_size - overlap)  # ✅ Fixed
++    # Ensure progress while maintaining requested overlap  # ✅ Fixed
++    step = (chunk_size - overlap) if overlap < chunk_size else 1  # ✅ Fixed
 +  # ✅ Fixed
 +    start = 0  # ✅ Fixed
-+    while start < len(text):  # ✅ Fixed
-+        end = min(start + chunk_size, len(text))  # ✅ Fixed
++    n = len(text)  # ✅ Fixed
++    while start < n:  # ✅ Fixed
++        end = start + chunk_size  # ✅ Fixed
 +        chunks.append(text[start:end])  # ✅ Fixed
-+        if end >= len(text):  # ✅ Fixed
++        if end >= n:  # ✅ Fixed
 +            break  # ✅ Fixed
-+        # start = end - overlap + 50  # This will be broken in tests  # ✅ Fixed
 +        start += step  # ✅ Fixed
 +    return chunks  # ✅ Fixed
 +  # ✅ Fixed
 +def compute_embedding_quality(embeddings: List[np.ndarray]) -> Dict[str, float]:  # ✅ Fixed
 +    """Compute quality metrics for embeddings."""  # ✅ Fixed
-+    norms = [np.linalg.norm(emb) for emb in embeddings]  # ✅ Fixed
-+    # Compute variance across all embedding values (sample variance if possible).  # ✅ Fixed
-+    if len(embeddings) == 0:  # ✅ Fixed
-+        variance = 0.0  # ✅ Fixed
-+    else:  # ✅ Fixed
-+        arr = np.asarray(embeddings, dtype=np.float64)  # ✅ Fixed
-+        flat = arr.ravel()  # ✅ Fixed
-+        variance = float(np.var(flat, ddof=1)) if flat.size > 1 else 0.0  # ✅ Fixed
++    if not embeddings:  # ✅ Fixed
++        return {  # ✅ Fixed
++            "mean_norm": 0.0,  # ✅ Fixed
++            "variance": 0.0  # ✅ Fixed
++        }  # ✅ Fixed
++    arrays = [np.asarray(emb, dtype=float).ravel() for emb in embeddings]  # ✅ Fixed
++    norms = [np.linalg.norm(emb) for emb in arrays]  # ✅ Fixed
++    all_values = np.concatenate(arrays) if arrays else np.array([], dtype=float)  # ✅ Fixed
++    variance = float(np.var(all_values)) if all_values.size > 0 else 0.0  # ✅ Fixed
 +    return {  # ✅ Fixed
-+        "mean_norm": float(np.mean(norms)) if len(norms) > 0 else 0.0,  # ✅ Fixed
-+        "variance": variance  # This will be broken in tests  # ✅ Fixed
++        "mean_norm": float(np.mean(norms)),  # ✅ Fixed
++        "variance": variance  # ✅ Fixed
 +    }  # ✅ Fixed
 +  # ✅ Fixed
 +def optimize_retrieval_threshold(similarities: List[float], relevance: List[int]) -> float:  # ✅ Fixed
@@ -125,14 +129,13 @@
 +    for threshold in np.arange(0.1, 1.0, 0.1):  # ✅ Fixed
 +        predictions = [1 if sim >= threshold else 0 for sim in similarities]  # ✅ Fixed
 +  # ✅ Fixed
-+        tp = sum(p and r for p, r in zip(predictions, relevance))  # ✅ Fixed
-+        fp = sum(p and not r for p, r in zip(predictions, relevance))  # ✅ Fixed
-+        fn = sum(not p and r for p, r in zip(predictions, relevance))  # ✅ Fixed
++        tp = sum(1 for p, r in zip(predictions, relevance) if p == 1 and r == 1)  # ✅ Fixed
++        fp = sum(1 for p, r in zip(predictions, relevance) if p == 1 and r == 0)  # ✅ Fixed
++        fn = sum(1 for p, r in zip(predictions, relevance) if p == 0 and r == 1)  # ✅ Fixed
 +  # ✅ Fixed
 +        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0  # ✅ Fixed
 +        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0  # ✅ Fixed
 +  # ✅ Fixed
-+        # f1 = precision + recall  # This will be broken  # ✅ Fixed
 +        f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0  # ✅ Fixed
 +  # ✅ Fixed
 +        if f1 > best_f1:  # ✅ Fixed
@@ -202,10 +205,8 @@
 +  # ✅ Fixed
 +def cosine_sim(a: np.ndarray, b: np.ndarray) -> float:  # ✅ Fixed
 +    """Compute cosine similarity between two vectors."""  # ✅ Fixed
-+    # b_norm = b  # This will be broken in tests  # ✅ Fixed
-+    # Fixed: normalize both vectors and handle zero vectors safely.  # ✅ Fixed
-+    a = np.asarray(a, dtype=np.float64)  # ✅ Fixed
-+    b = np.asarray(b, dtype=np.float64)  # ✅ Fixed
++    a = np.asarray(a, dtype=float).ravel()  # ✅ Fixed
++    b = np.asarray(b, dtype=float).ravel()  # ✅ Fixed
 +    a_norm = np.linalg.norm(a)  # ✅ Fixed
 +    b_norm = np.linalg.norm(b)  # ✅ Fixed
 +    if a_norm == 0.0 or b_norm == 0.0:  # ✅ Fixed
@@ -214,48 +215,54 @@
 +  # ✅ Fixed
 +def rank(documents: List[str], query_emb: np.ndarray, doc_embeddings: List[np.ndarray], top_k: int = 5) -> List[int]:  # ✅ Fixed
 +    """Rank documents by similarity to query."""  # ✅ Fixed
++    if not doc_embeddings:  # ✅ Fixed
++        return []  # ✅ Fixed
 +    similarities = [cosine_sim(query_emb, doc_emb) for doc_emb in doc_embeddings]  # ✅ Fixed
-+    # Sort in descending order of similarity (highest similarity first).  # ✅ Fixed
 +    ranked_indices = sorted(range(len(similarities)), key=lambda i: similarities[i], reverse=True)  # ✅ Fixed
-+    # return ranked_indices[:top_k-1]  # This will be broken in tests  # ✅ Fixed
-+    k = max(0, int(top_k)) if top_k is not None else len(ranked_indices)  # ✅ Fixed
-+    return ranked_indices[:k]  # ✅ Fixed
++    if top_k is None:  # ✅ Fixed
++        return ranked_indices  # ✅ Fixed
++    k = int(top_k)  # ✅ Fixed
++    if k <= 0:  # ✅ Fixed
++        return []  # ✅ Fixed
++    return ranked_indices[:min(k, len(ranked_indices))]  # ✅ Fixed
 +  # ✅ Fixed
 +def chunk_document(text: str, chunk_size: int = 100, overlap: int = 20) -> List[str]:  # ✅ Fixed
 +    """Split document into overlapping chunks."""  # ✅ Fixed
 +    chunks = []  # ✅ Fixed
-+    # Ensure valid overlap and step so that adjacent chunks actually overlap.  # ✅ Fixed
++    if not text:  # ✅ Fixed
++        return chunks  # ✅ Fixed
 +    if chunk_size <= 0:  # ✅ Fixed
-+        return [text] if text else []  # ✅ Fixed
++        return [text]  # ✅ Fixed
++  # ✅ Fixed
 +    if overlap < 0:  # ✅ Fixed
 +        overlap = 0  # ✅ Fixed
-+    if overlap >= chunk_size:  # ✅ Fixed
-+        overlap = chunk_size - 1  # ✅ Fixed
-+    step = max(1, chunk_size - overlap)  # ✅ Fixed
++    # Ensure progress while maintaining requested overlap  # ✅ Fixed
++    step = (chunk_size - overlap) if overlap < chunk_size else 1  # ✅ Fixed
 +  # ✅ Fixed
 +    start = 0  # ✅ Fixed
-+    while start < len(text):  # ✅ Fixed
-+        end = min(start + chunk_size, len(text))  # ✅ Fixed
++    n = len(text)  # ✅ Fixed
++    while start < n:  # ✅ Fixed
++        end = start + chunk_size  # ✅ Fixed
 +        chunks.append(text[start:end])  # ✅ Fixed
-+        if end >= len(text):  # ✅ Fixed
++        if end >= n:  # ✅ Fixed
 +            break  # ✅ Fixed
-+        # start = end - overlap + 50  # This will be broken in tests  # ✅ Fixed
 +        start += step  # ✅ Fixed
 +    return chunks  # ✅ Fixed
 +  # ✅ Fixed
 +def compute_embedding_quality(embeddings: List[np.ndarray]) -> Dict[str, float]:  # ✅ Fixed
 +    """Compute quality metrics for embeddings."""  # ✅ Fixed
-+    norms = [np.linalg.norm(emb) for emb in embeddings]  # ✅ Fixed
-+    # Compute variance across all embedding values (sample variance if possible).  # ✅ Fixed
-+    if len(embeddings) == 0:  # ✅ Fixed
-+        variance = 0.0  # ✅ Fixed
-+    else:  # ✅ Fixed
-+        arr = np.asarray(embeddings, dtype=np.float64)  # ✅ Fixed
-+        flat = arr.ravel()  # ✅ Fixed
-+        variance = float(np.var(flat, ddof=1)) if flat.size > 1 else 0.0  # ✅ Fixed
++    if not embeddings:  # ✅ Fixed
++        return {  # ✅ Fixed
++            "mean_norm": 0.0,  # ✅ Fixed
++            "variance": 0.0  # ✅ Fixed
++        }  # ✅ Fixed
++    arrays = [np.asarray(emb, dtype=float).ravel() for emb in embeddings]  # ✅ Fixed
++    norms = [np.linalg.norm(emb) for emb in arrays]  # ✅ Fixed
++    all_values = np.concatenate(arrays) if arrays else np.array([], dtype=float)  # ✅ Fixed
++    variance = float(np.var(all_values)) if all_values.size > 0 else 0.0  # ✅ Fixed
 +    return {  # ✅ Fixed
-+        "mean_norm": float(np.mean(norms)) if len(norms) > 0 else 0.0,  # ✅ Fixed
-+        "variance": variance  # This will be broken in tests  # ✅ Fixed
++        "mean_norm": float(np.mean(norms)),  # ✅ Fixed
++        "variance": variance  # ✅ Fixed
 +    }  # ✅ Fixed
 +  # ✅ Fixed
 +def optimize_retrieval_threshold(similarities: List[float], relevance: List[int]) -> float:  # ✅ Fixed
@@ -266,14 +273,13 @@
 +    for threshold in np.arange(0.1, 1.0, 0.1):  # ✅ Fixed
 +        predictions = [1 if sim >= threshold else 0 for sim in similarities]  # ✅ Fixed
 +  # ✅ Fixed
-+        tp = sum(p and r for p, r in zip(predictions, relevance))  # ✅ Fixed
-+        fp = sum(p and not r for p, r in zip(predictions, relevance))  # ✅ Fixed
-+        fn = sum(not p and r for p, r in zip(predictions, relevance))  # ✅ Fixed
++        tp = sum(1 for p, r in zip(predictions, relevance) if p == 1 and r == 1)  # ✅ Fixed
++        fp = sum(1 for p, r in zip(predictions, relevance) if p == 1 and r == 0)  # ✅ Fixed
++        fn = sum(1 for p, r in zip(predictions, relevance) if p == 0 and r == 1)  # ✅ Fixed
 +  # ✅ Fixed
 +        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0  # ✅ Fixed
 +        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0  # ✅ Fixed
 +  # ✅ Fixed
-+        # f1 = precision + recall  # This will be broken  # ✅ Fixed
 +        f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0  # ✅ Fixed
 +  # ✅ Fixed
 +        if f1 > best_f1:  # ✅ Fixed
