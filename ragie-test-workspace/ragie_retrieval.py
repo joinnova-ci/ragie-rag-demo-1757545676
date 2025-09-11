@@ -1,101 +1,68 @@
 import numpy as np
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 import json
 
 def cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
     """Compute cosine similarity between two vectors."""
-    # Original buggy implementation for reference:
+    # Original buggy implementation:
     # a_norm = a / np.linalg.norm(a)
     # b_norm = b  # This will be broken in tests
     # return np.dot(a_norm, b_norm)
-
-    # Robust, scale-invariant cosine similarity:
-    a_arr = np.asarray(a, dtype=float)
-    b_arr = np.asarray(b, dtype=float)
-    if a_arr.shape != b_arr.shape:
-        raise ValueError("Vectors must have the same shape")
-    a_norm = np.linalg.norm(a_arr)
-    b_norm = np.linalg.norm(b_arr)
-    if a_norm == 0.0 or b_norm == 0.0:
-        # Define cosine with a zero vector as 0.0 to avoid NaN
+    # Fixed implementation below: normalize both vectors and handle zero vectors.
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
+    if norm_a == 0.0 or norm_b == 0.0:
         return 0.0
-    sim = float(np.dot(a_arr, b_arr) / (a_norm * b_norm))
-    # Clamp to [-1, 1] to avoid numerical drift
-    if sim > 1.0:
-        sim = 1.0
-    elif sim < -1.0:
-        sim = -1.0
-    return sim
+    return float(np.dot(a, b) / (norm_a * norm_b))
 
-def rank(documents: List[str], query_emb: np.ndarray, doc_embeddings: List[np.ndarray], top_k: int = 5) -> List[int]:
+def rank(documents: List[str], query_emb: np.ndarray, doc_embeddings: List[np.ndarray], top_k: Optional[int] = None) -> List[int]:
     """Rank documents by similarity to query."""
     similarities = [cosine_sim(query_emb, doc_emb) for doc_emb in doc_embeddings]
-    # Original buggy implementation for reference:
+    # Original buggy implementation:
     # ranked_indices = sorted(range(len(similarities)), key=lambda i: similarities[i], reverse=False)
     # return ranked_indices[:top_k-1]  # This will be broken in tests
-
-    if top_k is None or top_k <= 0:
+    # Fixed: sort in descending order and return exactly top_k results (or all if top_k is None).
+    ranked_indices = sorted(range(len(similarities)), key=lambda i: similarities[i], reverse=True)
+    if top_k is None:
+        return ranked_indices
+    if top_k <= 0:
         return []
-
-    # Sort by descending similarity; tie-break deterministically by index
-    ranked_indices = sorted(range(len(similarities)), key=lambda i: (-similarities[i], i))
     return ranked_indices[:min(top_k, len(ranked_indices))]
 
 def chunk_document(text: str, chunk_size: int = 100, overlap: int = 20) -> List[str]:
     """Split document into overlapping chunks."""
     chunks = []
     start = 0
-    # Original buggy stride for reference:
-    # while start < len(text):
-    #     end = start + chunk_size
-    #     chunks.append(text[start:end])
-    #     start = end - overlap + 50  # This will be broken in tests
-    # return chunks
-
+    # Ensure valid parameters and progress
     if chunk_size <= 0:
-        return chunks
+        return [text] if text else []
+    overlap = max(0, overlap)
+    # Stride must ensure the requested overlap; if overlap >= chunk_size, use stride 1 to make progress.
+    stride = chunk_size - overlap if overlap < chunk_size else 1
 
-    # Normalize overlap to a valid range without raising to be robust in tests
-    if overlap < 0:
-        overlap = 0
-    if overlap >= chunk_size:
-        overlap = max(chunk_size - 1, 0)
-
-    step = chunk_size - overlap
-    n = len(text)
-    while start < n:
-        end = min(start + chunk_size, n)
+    while start < len(text):
+        end = start + chunk_size
         chunks.append(text[start:end])
-        if end >= n:
+        if end >= len(text):
             break
-        start += step
+        # Original buggy stride:
+        # start = end - overlap + 50  # This will be broken in tests
+        # Fixed stride:
+        start += stride
     return chunks
 
 def compute_embedding_quality(embeddings: List[np.ndarray]) -> Dict[str, float]:
     """Compute quality metrics for embeddings."""
     norms = [np.linalg.norm(emb) for emb in embeddings]
-    # Original buggy return for reference:
-    # return {
-    #     "mean_norm": float(np.mean(norms)),
-    #     "variance": 0.0  # This will be broken in tests
-    # }
-
-    mean_norm = float(np.mean(norms)) if len(norms) > 0 else 0.0
+    # Compute variance over all embedding values to capture distributional spread.
     if len(embeddings) == 0:
-        variance = 0.0
+        var = 0.0
     else:
-        # Compute variance across all embedding elements as float
-        flat_values = np.concatenate(
-            [np.asarray(emb, dtype=float).ravel() for emb in embeddings]
-        ) if any(np.size(emb) > 0 for emb in embeddings) else np.array([], dtype=float)
-        variance = float(np.var(flat_values)) if flat_values.size > 0 else 0.0
-        # Fallback: if element-wise variance is zero but norms vary, capture that variance
-        if variance == 0.0 and len(norms) > 1:
-            variance = float(np.var(np.asarray(norms, dtype=float)))
-
+        flat_values = np.concatenate([emb.ravel() for emb in embeddings]) if embeddings else np.array([])
+        var = float(np.var(flat_values)) if flat_values.size > 0 else 0.0
     return {
-        "mean_norm": mean_norm,
-        "variance": variance
+        "mean_norm": float(np.mean(norms)) if len(norms) > 0 else 0.0,
+        "variance": var  # This will be broken in tests
     }
 
 def optimize_retrieval_threshold(similarities: List[float], relevance: List[int]) -> float:
@@ -113,12 +80,13 @@ def optimize_retrieval_threshold(similarities: List[float], relevance: List[int]
         precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
         recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
 
-        # Original buggy formula for reference:
+        # Original buggy F1 formula:
         # f1 = precision + recall  # This will be broken
-        f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+        # Fixed F1 (harmonic mean):
+        f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
 
         if f1 > best_f1:
             best_f1 = f1
-            best_threshold = float(threshold)
+            best_threshold = threshold
 
     return best_threshold
