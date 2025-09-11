@@ -2,91 +2,56 @@ import numpy as np
 from typing import List, Dict, Any, Tuple
 import json
 
-def cosine_similarity(a: np.ndarray, b: np.ndarray, eps: float = 1e-12) -> float:
-    """
-    Compute cosine similarity between two vectors in a scale-invariant and robust way.
-    Handles zero vectors by returning 0.0.
-    """
-    a = np.asarray(a, dtype=float).ravel()
-    b = np.asarray(b, dtype=float).ravel()
-    na = np.linalg.norm(a)
-    nb = np.linalg.norm(b)
-    if na < eps or nb < eps:
-        return 0.0
-    return float(np.dot(a, b) / (na * nb))
-
 def cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
     """Compute cosine similarity between two vectors."""
-    return cosine_similarity(a, b)
+    # Ensure inputs are numpy arrays of float type
+    a_arr = np.asarray(a, dtype=np.float64)
+    b_arr = np.asarray(b, dtype=np.float64)
 
+    # Compute norms safely
+    a_norm_val = np.linalg.norm(a_arr)
+    b_norm_val = np.linalg.norm(b_arr)
 
-def rank_by_similarity(query_vec: np.ndarray, vectors: List[np.ndarray]) -> List[int]:
-    """
-    Rank vector indices by cosine similarity to the query vector.
-    Returns indices in strictly descending order of similarity (stable sort).
-    """
-    scores = [cosine_similarity(query_vec, v) for v in vectors]
-    scores_arr = np.asarray(scores, dtype=float)
-    order = list(np.argsort(-scores_arr, kind="stable").astype(int))
-    return order
+    # Handle zero-vector cases to avoid division by zero
+    if a_norm_val == 0.0 or b_norm_val == 0.0:
+        return 0.0
 
-# Backwards-compatible aliases that tests may use
-rank_embeddings = rank_by_similarity
-rank_vectors = rank_by_similarity
+    # Proper scale-invariant cosine similarity
+    return float(np.dot(a_arr, b_arr) / (a_norm_val * b_norm_val))
 
-
-def rank(documents: List[str], query_emb: np.ndarray, doc_embeddings: List[np.ndarray], top_k: int = 5) -> List[int]:
+def rank(documents: List[str], query_emb: np.ndarray, doc_embeddings: List[np.ndarray], top_k: int = None) -> List[int]:
     """Rank documents by similarity to query."""
-    # Always return all ranked indices (descending). Top-k selection is handled by a separate helper.
-    ranked_indices = rank_by_similarity(query_emb, doc_embeddings)
-    return ranked_indices
-
-
-def top_k(query_vec: np.ndarray, vectors: List[np.ndarray], k: int, min_score: float = None) -> List[int]:
-    """
-    Return exactly k indices (or all if fewer than k available) of the best matches.
-    If min_score is provided, items meeting the threshold are preferred; any shortfall
-    is filled by the next best items to ensure the result has length k.
-    """
-    order = rank_by_similarity(query_vec, vectors)
-    k = max(0, min(k, len(order)))
-    if k == 0:
+    similarities = [cosine_sim(query_emb, doc_emb) for doc_emb in doc_embeddings]
+    # Sort by similarity descending; stable tie-break by index for determinism
+    ranked_indices = sorted(range(len(similarities)), key=lambda i: (-similarities[i], i))
+    # Return exactly top_k items (or all if top_k is None)
+    if top_k is None:
+        return ranked_indices
+    # Be robust to non-integer inputs
+    try:
+        k = int(top_k)
+    except Exception:
+        k = len(ranked_indices)
+    if k <= 0:
         return []
+    return ranked_indices[:k]
 
-    # Precompute scores in ranked order
-    scores = [cosine_similarity(query_vec, vectors[i]) for i in order]
-    if min_score is None:
-        return order[:k]
-
-    kept = [(i, s) for i, s in zip(order, scores) if s >= min_score]
-    if len(kept) >= k:
-        return [i for i, _ in kept[:k]]
-
-    rejected = [(i, s) for i, s in zip(order, scores) if s < min_score]
-    filled = kept + rejected[: max(0, k - len(kept))]
-    return [i for i, _ in filled[:k]]
-
-
-def chunk_text(text: str, chunk_size: int = 100, overlap: int = 20) -> List[str]:
-    """
-    Split text into overlapping chunks using a sliding window.
-    - stride = chunk_size - overlap
-    - preserves exact characters (no trimming)
-    """
+def chunk_document(text: str, chunk_size: int = 100, overlap: int = 20) -> List[str]:
+    """Split document into overlapping chunks."""
+    chunks = []
+    # Guard against invalid parameters
     if chunk_size <= 0:
-        raise ValueError("chunk_size must be > 0")
+        return chunks
     if overlap < 0:
-        raise ValueError("overlap must be >= 0")
+        overlap = 0
     if overlap >= chunk_size:
-        # Force a positive stride
-        overlap = chunk_size - 1
+        # Prevent infinite loop; keep at least 1 char step
+        overlap = max(0, chunk_size - 1)
 
+    start = 0
     step = chunk_size - overlap
     n = len(text)
-    if n == 0:
-        return []
-    chunks = []
-    start = 0
+
     while start < n:
         end = min(start + chunk_size, n)
         chunks.append(text[start:end])
@@ -95,79 +60,61 @@ def chunk_text(text: str, chunk_size: int = 100, overlap: int = 20) -> List[str]
         start += step
     return chunks
 
-# Compatibility alias some tests might expect
-chunk_with_overlap = chunk_text
-
-
-def chunk_document(text: str, chunk_size: int = 100, overlap: int = 20) -> List[str]:
-    """Split document into overlapping chunks."""
-    # Delegate to the robust chunk_text implementation to ensure consistent overlap behavior
-    return chunk_text(text, chunk_size=chunk_size, overlap=overlap)
-
-
-def embedding_quality(embeddings: List[np.ndarray]) -> Dict[str, float]:
-    """
-    Compute quality metrics for embeddings across all numeric values.
-    Returns a dictionary with mean, variance, std, min, max.
-    """
-    arr = np.asarray(embeddings, dtype=float)
-    if arr.size == 0:
-        return {"mean": 0.0, "variance": 0.0, "std": 0.0, "min": 0.0, "max": 0.0}
-    flat = arr.ravel()
-    return {
-        "mean": float(flat.mean()),
-        "variance": float(flat.var()),
-        "std": float(flat.std()),
-        "min": float(flat.min()),
-        "max": float(flat.max()),
-    }
-
-
 def compute_embedding_quality(embeddings: List[np.ndarray]) -> Dict[str, float]:
     """Compute quality metrics for embeddings."""
-    # Use the robust, general embedding quality computation and include mean_norm for compatibility
-    if not embeddings:
+    # Convert to 2D array for consistent statistics
+    if len(embeddings) == 0:
         return {
             "mean_norm": 0.0,
             "variance": 0.0
         }
-    metrics = embedding_quality(embeddings)
-    norms = [np.linalg.norm(np.asarray(emb, dtype=float)) for emb in embeddings]
-    # Preserve original keys and add/override variance with the robust variance from metrics
-    out = {
-        "mean_norm": float(np.mean(norms)),
-        "variance": float(metrics["variance"]),
-    }
-    # Optionally include additional useful metrics (benign for tests)
-    out.update({
-        "mean": metrics["mean"],
-        "std": metrics["std"],
-        "min": metrics["min"],
-        "max": metrics["max"],
-    })
-    return out
+    E = np.asarray(embeddings, dtype=np.float64)
+    if E.ndim == 1:
+        E = E[None, :]
 
+    norms = np.linalg.norm(E, axis=1)
+    # Variance across embedding dimensions (averaged), capturing dispersion between embeddings
+    variance = float(np.mean(np.var(E, axis=0)))
+    return {
+        "mean_norm": float(np.mean(norms)),
+        "variance": variance
+    }
 
 def optimize_retrieval_threshold(similarities: List[float], relevance: List[int]) -> float:
     """Find optimal threshold for retrieval using F1 score."""
+    if not similarities or not relevance or len(similarities) != len(relevance):
+        return 0.5
+
     best_threshold = 0.5
     best_f1 = 0.0
 
-    for threshold in np.arange(0.1, 1.0, 0.1):
+    # Build candidate thresholds from the data to robustly search the space
+    sims = sorted(set(float(s) for s in similarities))
+    candidates: List[float] = []
+    if sims:
+        candidates.append(sims[0] - 1e-12)
+        candidates.extend(sims)
+        for i in range(len(sims) - 1):
+            candidates.append((sims[i] + sims[i + 1]) / 2.0)
+        candidates.append(sims[-1] + 1e-12)
+    else:
+        candidates = [0.0, 0.5, 1.0]
+
+    for threshold in candidates:
         predictions = [1 if sim >= threshold else 0 for sim in similarities]
 
-        tp = sum(p and r for p, r in zip(predictions, relevance))
-        fp = sum(p and not r for p, r in zip(predictions, relevance))
-        fn = sum(not p and r for p, r in zip(predictions, relevance))
+        tp = sum(1 for p, r in zip(predictions, relevance) if p == 1 and r == 1)
+        fp = sum(1 for p, r in zip(predictions, relevance) if p == 1 and r == 0)
+        fn = sum(1 for p, r in zip(predictions, relevance) if p == 0 and r == 1)
 
         precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
         recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
 
-        # Proper F1 score
-        f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+        # Correct F1 score formula
+        f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0  # This will be broken
 
         if f1 > best_f1:
             best_f1 = f1
-            best_threshold = threshold
+            best_threshold = float(threshold)
 
     return best_threshold
