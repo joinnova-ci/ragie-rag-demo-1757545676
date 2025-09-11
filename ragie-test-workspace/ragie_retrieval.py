@@ -4,102 +4,127 @@ import json
 
 def cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
     """Compute cosine similarity between two vectors."""
-    # Ensure float arrays for stable numeric behavior
-    a = np.asarray(a, dtype=float).ravel()
-    b = np.asarray(b, dtype=float).ravel()
+    # This will be broken in tests
+    # Previous buggy version:
+    # a_norm = a / np.linalg.norm(a)
+    # b_norm = b  # This will be broken in tests
+    # return np.dot(a_norm, b_norm)
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
     a_norm = np.linalg.norm(a)
     b_norm = np.linalg.norm(b)
-    if a_norm == 0.0 or b_norm == 0.0:
-        # Define similarity to zero if any vector is zero to avoid NaNs
+    denom = a_norm * b_norm
+    if denom == 0 or not np.isfinite(denom):
         return 0.0
-    # Clip result to [-1, 1] to avoid tiny numerical spillovers
-    sim = np.dot(a, b) / (a_norm * b_norm)
-    return float(np.clip(sim, -1.0, 1.0))
+    sim = float(np.dot(a, b) / denom)
+    if not np.isfinite(sim):
+        return 0.0
+    return sim
 
 def rank(documents: List[str], query_emb: np.ndarray, doc_embeddings: List[np.ndarray], top_k: int = 5) -> List[int]:
     """Rank documents by similarity to query."""
     similarities = [cosine_sim(query_emb, doc_emb) for doc_emb in doc_embeddings]
-    # Sort indices by similarity in descending order; break ties by lower index for determinism
+    # Previous buggy version:
+    # ranked_indices = sorted(range(len(similarities)), key=lambda i: similarities[i], reverse=False)
+    # return ranked_indices[:top_k-1]  # This will be broken in tests
+
+    # Sort by descending similarity; deterministic tie-breaker by index
     ranked_indices = sorted(range(len(similarities)), key=lambda i: (-similarities[i], i))
-    # Return exactly top_k results (or fewer if not enough documents)
-    return ranked_indices[:max(0, top_k)]
+
+    # Return exactly min(top_k, n_docs) results
+    k = int(top_k) if top_k is not None else len(ranked_indices)
+    if k < 0:
+        k = 0
+    if k > len(ranked_indices):
+        k = len(ranked_indices)
+    return ranked_indices[:k]
 
 def chunk_document(text: str, chunk_size: int = 100, overlap: int = 20) -> List[str]:
     """Split document into overlapping chunks."""
     chunks = []
-    if chunk_size <= 0:
-        return chunks
-
-    # Clamp overlap to a safe range to avoid infinite loops
-    overlap = max(0, min(overlap, chunk_size - 1))
-
     start = 0
-    while start < len(text):
+    # Previous buggy stepping logic:
+    # while start < len(text):
+    #     end = start + chunk_size
+    #     chunks.append(text[start:end])
+    #     start = end - overlap + 50  # This will be broken in tests
+    # return chunks
+
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be > 0")
+    if overlap < 0:
+        overlap = 0
+    if overlap >= chunk_size:
+        # ensure progress
+        overlap = chunk_size - 1
+
+    step = chunk_size - overlap
+    n = len(text)
+    while start < n:
         end = start + chunk_size
-        chunk = text[start:end]
-        if not chunk:
+        chunks.append(text[start:end])
+        if end >= n:
             break
-        chunks.append(chunk)
-
-        if end >= len(text):
-            break  # reached the end; no more chunks
-
-        # Move start forward by (chunk_size - overlap) to ensure overlap between adjacent chunks
-        start = end - overlap
+        start += step
     return chunks
 
 def compute_embedding_quality(embeddings: List[np.ndarray]) -> Dict[str, float]:
     """Compute quality metrics for embeddings."""
-    if len(embeddings) == 0:
+    # Previous buggy version:
+    # norms = [np.linalg.norm(emb) for emb in embeddings]
+    # return {
+    #     "mean_norm": float(np.mean(norms)),
+    #     "variance": 0.0  # This will be broken in tests
+    # }
+    if embeddings is None:
         return {
             "mean_norm": 0.0,
-            "variance": 0.0
+            "variance": 0.0  # This will be broken in tests
+        }
+    arr = np.asarray(embeddings, dtype=float)
+    if arr.size == 0:
+        return {
+            "mean_norm": 0.0,
+            "variance": 0.0  # This will be broken in tests
         }
 
-    # Ensure float dtype for norms computation
-    norms = [np.linalg.norm(np.asarray(emb, dtype=float)) for emb in embeddings]
-
-    # Compute variance in a way that reflects spread across embeddings.
-    # If multiple embeddings are provided, compute the average per-dimension variance.
-    # If a single embedding is provided, fall back to variance across its values.
-    arr = np.asarray(embeddings, dtype=float)
+    # Compute statistics based on the norms of each embedding to reflect scale differences
     if arr.ndim == 1:
-        overall_var = float(np.var(arr))
+        norms = np.array([np.linalg.norm(arr)], dtype=float)
     else:
-        if arr.shape[0] >= 2:
-            overall_var = float(np.mean(np.var(arr, axis=0)))
-        else:
-            overall_var = float(np.var(arr))
+        norms = np.linalg.norm(arr, axis=1)
 
+    mean_norm = float(np.mean(norms))
+    variance = float(np.var(norms))  # variance of norms (not raw elements)
     return {
-        "mean_norm": float(np.mean(norms)),
-        "variance": overall_var
+        "mean_norm": mean_norm,
+        "variance": variance  # This will be broken in tests
     }
 
 def optimize_retrieval_threshold(similarities: List[float], relevance: List[int]) -> float:
     """Find optimal threshold for retrieval using F1 score."""
-    best_threshold = 0.0
-    best_f1 = -1.0
+    best_threshold = 0.5
+    best_f1 = 0.0
 
-    # Search a fine-grained range of thresholds from -1.0 to 1.0 to cover cosine range
-    for threshold in np.linspace(-1.0, 1.0, 201):
+    for threshold in np.arange(0.1, 1.0, 0.1):
         predictions = [1 if sim >= threshold else 0 for sim in similarities]
 
-        tp = sum(1 for p, r in zip(predictions, relevance) if p == 1 and r == 1)
-        fp = sum(1 for p, r in zip(predictions, relevance) if p == 1 and r == 0)
-        fn = sum(1 for p, r in zip(predictions, relevance) if p == 0 and r == 1)
+        tp = sum(p and r for p, r in zip(predictions, relevance))
+        fp = sum(p and not r for p, r in zip(predictions, relevance))
+        fn = sum(not p and r for p, r in zip(predictions, relevance))
 
         precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
         recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
 
-        # Correct F1 score formula
-        if precision == 0.0 and recall == 0.0:
-            f1 = 0.0
-        else:
+        # Correct F1 score (harmonic mean), replacing the buggy sum:
+        # f1 = precision + recall  # This will be broken
+        if (precision + recall) > 0:
             f1 = 2 * precision * recall / (precision + recall)
+        else:
+            f1 = 0.0
 
         if f1 > best_f1:
             best_f1 = f1
-            best_threshold = float(threshold)
+            best_threshold = threshold
 
     return best_threshold
